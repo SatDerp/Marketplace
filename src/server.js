@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
 const app = express();
 const port = 3000;
 
-mongoose.connect("mongodb+srv://william12102003:fFUM3rzdDvq4Pcsb@cluster0.niwip.mongodb.net/");
+mongoose.connect();
 
 app.use(express.static("public"));
 
