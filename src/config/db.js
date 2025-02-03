@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import User from '../models/users.js';
 import Listing from '../models/listings.js';
 import Car from '../models/car.js';
+import e from "express";
 
 //connect to db locally
 //if you are connected to db on atlas then you need to use uri in .env file
@@ -15,17 +16,44 @@ const connectDb = async () => {
         await User.createIndexes();
         await createUser();
 
-        await Car.createIndexes();
-        await createCar();
+        // await Car.createIndexes();
+        // await createCar();
         // await createListing();
     } catch (e) {
         console.error("Error cant connect to db: ", e);
     }
 };
 
+function validateUsers(usersToAdd) {
+    let uniqueUsers = []
+    let seenEmails = new Set();
+
+    for (let users of usersToAdd) {
+        if (users && !seenEmails.has(users.email)) {
+            uniqueUsers.push(users);
+            seenEmails.add(users.email);
+        } 
+    }
+
+    let validUsers = [];
+    for (let u of uniqueUsers) {
+        const usr = new User(u); //create new usr document
+        const e = usr.validateSync(); //force a validation
+        
+        if (!e) 
+            validUsers.push(u);
+        else {
+            Object.keys(e.errors).forEach((k) => {
+                console.error(e.errors[k].message);
+            })
+        }
+    }
+    
+    return validUsers
+}
 
 async function createUser() {
-    console.log("Creating new user");
+    console.log("Creating new users");
     const newUsers = [
         { name: "Willz", age: 21, email: "first@gmail.com", password: "qwerty1" },
         { name: "Mimerz", age: 23, email: "second@gmail.com", password: "qwerty2" },
@@ -35,25 +63,42 @@ async function createUser() {
         { name: "MD", age: 22, email: "hi@gmail.com" },
     ];
 
-    for (let usr of newUsers) {
+    //get valid users from newUsers array batch
+    const addUsers = validateUsers(newUsers);
+
+    if (addUsers.length == 0) {
+        console.log("No valid users to add");
+    } else {
         try {
-            await User.create(usr);
+            //now we can bulk write but also make sure adding users with new emails
+            const bulkOperations = addUsers.map(usr => ({
+                updateOne: {
+                    filter: {email: usr.email}, 
+                    update: {$setOnInsert: usr}, //use this field with upsert so usr is added when we are creating a new document
+                    upsert: true, //stands for update and insert
+                    //if document on filter DNE then create it
+                }
+            }));
+    
+            //bulkwrite performs bulk operations that are defined in the first param: array of operations
+            await User.bulkWrite(bulkOperations);
+            console.log("Bulk Insert complete");
         } catch (e) {
-            if (e.code === 11000)
-                console.error("Duplicate user")
-            else {
-                Object.keys(e.errors).forEach((k) => {
-                    console.error(e.errors[k].message);
-                })
-            }
+            console.log(e);
         }
     }
-
-
-    // try {
-    //     const bulkOperation = 
-    // } catch (e) {
-
+    // for (let usr of newUsers) {
+    //     try {
+    //         await User.create(usr);
+    //     } catch (e) {
+    //         if (e.code === 11000)
+    //             console.error("Duplicate user")
+    //         else {
+    //             Object.keys(e.errors).forEach((k) => {
+    //                 console.error(e.errors[k].message);
+    //             })
+    //         }
+    //     }
     // }
 }
 
