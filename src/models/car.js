@@ -1,4 +1,4 @@
-import mongoose, { mongo } from "mongoose";
+import mongoose from "mongoose";
 
 const carSchema = new mongoose.Schema({
     vin: { type: String, required: true, unique: true },
@@ -7,7 +7,7 @@ const carSchema = new mongoose.Schema({
     make: { type: String, required: true },
     model: { type: String, required: true },
     color: String,
-    owner: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, unique: true }
+    owner: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true}
 });
 
 const Car = new mongoose.model('Car', carSchema);

@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 const listingSchema = new mongoose.Schema({
-    seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true},
     title: { type: String, required: true },
     description: {
         condition: { type: String, enum: ["New", "Lightly Used", "Salvaged"] },

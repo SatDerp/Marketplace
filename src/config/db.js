@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 import User from '../models/users.js';
 import Listing from '../models/listings.js';
 import Car from '../models/car.js';
-import e from "express";
 
 //connect to db locally
 //if you are connected to db on atlas then you need to use uri in .env file
@@ -16,15 +15,29 @@ const connectDb = async () => {
         await User.createIndexes();
         await createUser();
 
-        // await Car.createIndexes();
-        // await createCar();
-        // await createListing();
+        await Car.createIndexes();
+        await createCar();
+
+        await Listing.createIndexes();
+        await createListing();
     } catch (e) {
         console.error("Error cant connect to db: ", e);
     }
 };
 
-function validateUsers(usersToAdd) {
+async function mapUsertoId(userNames) {
+    //userNames is a list of names we want to map name to id for
+    const nameToId = new Map();
+    const ownerId = await User.find({name : {$in: userNames} }).lean();
+
+    for (let names of ownerId) {
+        nameToId.set(`${names.name}`, names._id);
+    }
+
+    return nameToId;
+}
+
+async function validateUsers(usersToAdd) {
     let uniqueUsers = []
     let seenEmails = new Set();
 
@@ -35,19 +48,18 @@ function validateUsers(usersToAdd) {
         } 
     }
 
-    let validUsers = [];
-    for (let u of uniqueUsers) {
-        const usr = new User(u); //create new usr document
-        const e = usr.validateSync(); //force a validation
-        
-        if (!e) 
-            validUsers.push(u);
-        else {
-            Object.keys(e.errors).forEach((k) => {
-                console.error(e.errors[k].message);
-            })
-        }
-    }
+    const validUsers = await Promise.all(
+        uniqueUsers.map(async (user) => {
+            try {
+                await new User(user).validate();
+                return user;
+            } catch(e) {
+                Object.keys(e.errors).forEach((k) => {
+                    console.log(e.errors[k].message);
+                })
+            }
+        })
+    ).then(result => result.filter(Boolean));
     
     return validUsers
 }
@@ -64,7 +76,7 @@ async function createUser() {
     ];
 
     //get valid users from newUsers array batch
-    const addUsers = validateUsers(newUsers);
+    const addUsers = await validateUsers(newUsers);
 
     if (addUsers.length == 0) {
         console.log("No valid users to add");
@@ -75,31 +87,52 @@ async function createUser() {
                 updateOne: {
                     filter: {email: usr.email}, 
                     update: {$setOnInsert: usr}, //use this field with upsert so usr is added when we are creating a new document
-                    upsert: true, //stands for update and insert
-                    //if document on filter DNE then create it
-                }
+                    upsert: true, //stands for update and insert and if document on filter DNE then create it
+                } 
             }));
     
             //bulkwrite performs bulk operations that are defined in the first param: array of operations
             await User.bulkWrite(bulkOperations);
-            console.log("Bulk Insert complete");
+            console.log("Bulk Insert User complete");
         } catch (e) {
-            console.log(e);
+            console.error(e);
         }
     }
-    // for (let usr of newUsers) {
-    //     try {
-    //         await User.create(usr);
-    //     } catch (e) {
-    //         if (e.code === 11000)
-    //             console.error("Duplicate user")
-    //         else {
-    //             Object.keys(e.errors).forEach((k) => {
-    //                 console.error(e.errors[k].message);
-    //             })
-    //         }
-    //     }
-    // }
+}
+
+async function validateCars(carsToAdd) {
+    let carsUniqueVins = [];
+    let seenVins = new Set();
+
+    for (let car of carsToAdd) { //filter only cars with unique vins 
+        if (car && !seenVins.has(car.vin)) {
+            carsUniqueVins.push(car);
+            seenVins.add(car.vin);
+        }
+    }
+
+    const namesList = carsUniqueVins.map(usr => (usr.owner));
+    const nameToIdMap = await mapUsertoId(namesList);
+    //populate the owner field with the object ids
+    for (let n of carsUniqueVins) {
+        n.owner = nameToIdMap.get(n.owner)
+    }
+    
+    //validate unique cars async
+    const validCars = await Promise.all(
+        carsUniqueVins.map(async (car) => {
+            try {
+                await new Car(car).validate();
+                return car;
+            } catch (e) {
+                Object.keys(e.errors).forEach((k) => {
+                    console.log(e.errors[k].message);
+                })
+            }
+        })
+    ).then(results => results.filter(Boolean));
+
+    return validCars;
 }
 
 async function createCar() {
@@ -120,7 +153,7 @@ async function createCar() {
             mileage: 24000,
             year: 2021,
             model: "Civic Sedan",
-            make: "Honda",
+            make: "Toyota",
             color: "Black",
             owner: "Wai"
         },
@@ -141,7 +174,7 @@ async function createCar() {
             make: "Lexus",
             color: "White",
             owner: "Sam"
-        },
+        }, //owner DNE
         {
             vin: "12345",
             mileage: 28000,
@@ -150,67 +183,168 @@ async function createCar() {
             make: "Lexus",
             color: "White",
             owner: "Willz"
+        }, //same vin
+        {
+            vin: "99",
+            year: 2021,
+            model: "Civic Sedan",
+            make: "Honda",
+            color: "Black",
+            owner: "Mimerz"
+        } //missing mileage info
+    ];
+
+    const validCars = await validateCars(newCars);
+    // console.log("valid cars to add to db", validCars);
+
+    if (validCars.length == 0) {
+        console.log("No valid cars to add");
+    } else {
+        try {
+            const bulkOp = validCars.map(car => ({
+                updateOne: {
+                    filter: {vin: car.vin},
+                    update: {$setOnInsert: car},
+                    upsert: true
+                }
+            }));
+    
+            await Car.bulkWrite(bulkOp);
+            console.log("Bulk Insert Cars Complete");
+        } catch (e) {
+            console.error(e);
+        }
+    }
+}
+
+async function mapCarToId(carNames) {
+    const carToCarId = new Map();
+    const listOfCars = await Car.find({make: {$in : carNames} }).lean();
+
+    for (let car of listOfCars) {
+        carToCarId.set(`${car.make}`, car._id);
+    }
+
+    return carToCarId;
+}
+
+async function validateListings(listingsToAdd){
+    //make sure that seller and car exists
+    const listingNames = listingsToAdd.map(list => (list.seller));
+    const listingCars = listingsToAdd.map(list => (list.description.car));
+
+    const nameToUserId = await mapUsertoId(listingNames);
+    const carToCarId = await mapCarToId(listingCars);
+
+    //fill in seller and car objectIds
+    for (let listing of listingsToAdd) {
+        listing.seller = nameToUserId.get(listing.seller);
+        listing.description.car = carToCarId.get(listing.description.car);
+    }
+
+    //do input validation 
+    const validListings = await Promise.all(
+        listingsToAdd.map(async (listing) => {
+            try {
+                await new Listing(listing).validate();
+                
+                return listing;
+            } catch(e) {
+                Object.keys(e.errors).forEach((k) => {
+                    console.log(e.errors[k].message);
+                })
+            }
+        })
+    ).then(res => res.filter(Boolean));
+
+    return validListings;
+}
+
+async function createListing() {
+    console.log("Creating listings");
+
+    const newListings = [
+        {
+            seller: "Willz",
+            title: "Used 2022 Honda Civic",
+            description: {
+                condition: "Lightly Used",
+                hasTitle: true,
+                car: "Honda"
+            },
+            price: 5000
+        },
+        {
+            seller: "Wai",
+            title: "New Toyota",
+            description: {
+                condition: "New",
+                hasTitle: true,
+                car: "Toyota",
+            },
+            price: 8000
+        },
+        {
+            seller: "Mimerz",
+            title: "Used Lexus",
+            description: {
+                condition: "Lightly Used",
+                hasTitle: true,
+                car: "Lexus",
+            },
+            price: 10000
+        },
+        {
+            seller: "Mimerz",
+            title: "Lexus",
+            description: {
+                condition: "Like new", //invalid condition
+                hasTitle: true,
+                car: "Lexus",
+            },
+            price: 10000
+        },
+        {
+            seller: "Sam", //no user
+            title: "Lexus",
+            description: {
+                condition: "New", 
+                hasTitle: true,
+                car: "Lexus",
+            },
+            price: 10000
+        },
+        {
+            seller: "Willz", 
+            title: "Lexus",
+            description: {
+                condition: "New", 
+                hasTitle: true,
+            }, //no car
+            price: 10000
         },
     ];
 
-    const ownerID = await User.find({ name: { $in: newCars.map(n => n.owner) } }).distinct("_id", "name");
-    console.log(ownerID);
+    const addListings = await validateListings(newListings);
 
-    for (let cars of newCars) {
+    if (addListings.length == 0) {
+        console.log("No listings to add");
+    } else {
         try {
-            // await Car.create(cars);
+            const bulkOp = addListings.map(listing => ({
+                updateOne: {
+                    filter: {seller: listing.seller},
+                    update: {$setOnInsert: listing},
+                    upsert: true
+                }
+            }));
+
+            await Listing.bulkWrite(bulkOp);
+            console.log("Bulk Insert on Listing Complete")
         } catch (e) {
-            if (e.code === 11000)
-                console.error("Duplicate vin/owner")
-            else {
-                Object.keys(e.errors).forEach((k) => {
-                    console.error(e.errors[k].message);
-                })
-            }
+            console.log(e);
         }
     }
-
 }
-
-// }
-
-// async function createListing() {
-//     console.log("Creating listings");
-
-//     const newListings = [
-//         {
-//             seller: user1._id, //user the id of the create user
-//             title: "2022 Honda Civic",
-//             description: {
-
-//             },
-//             price: 5000
-//         },
-
-
-//     ];
-
-//     const listing1 = new Listing({
-//         seller: user1._id, //user the id of the create user
-//         title: "2022 Honda Civic",
-//         description: {
-//             condition: "New",
-//             mileage: 26000,
-//             year: 2022,
-//             model: "Civic Hatchback",
-//             make: "Honda",
-//             hasTitle: true
-//         },
-//         price: 5000
-//     });
-
-//     try {
-//         await listing1.save(); //save instance into the db
-//     } catch (e) {
-//         Object.keys(e.errors).forEach((k) => {
-//             console.error(e.errors[k].message);
-//         })
-//     }
-// }
 
 export default connectDb;
