@@ -11,15 +11,15 @@ const connectDb = async () => {
         await mongoose.connect('mongodb://127.0.0.1:27017/Marketplace', { autoIndex: false, });
         console.log("Connected to db");
 
-        //create index for unique emails 
-        await User.createIndexes();
-        await createUser();
+        // //create index for unique emails 
+        // await User.createIndexes();
+        // await createUser();
 
-        await Car.createIndexes();
-        await createCar();
+        // await Car.createIndexes();
+        // await createCar();
 
-        await Listing.createIndexes();
-        await createListing();
+        // await Listing.createIndexes();
+        // await createListing();
     } catch (e) {
         console.error("Error cant connect to db: ", e);
     }
